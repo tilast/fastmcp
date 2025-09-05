@@ -369,11 +369,46 @@ class OAuthProxy(OAuthProvider):
         """Get client information by ID. This is generally the random ID
         provided to the DCR client during registration, not the upstream client ID.
 
-        For unregistered clients, returns None (which will raise an error in the SDK).
+        For unregistered clients, this method will reconstruct a ProxyDCRClient to support
+        stateless operation (e.g., after pod restarts) and cached token flows.
         """
+        # Try in-memory first
         client = self._clients.get(client_id)
+        if client is not None:
+            return client
 
-        return client
+        # Stateless-tolerant fallback: if the pod restarted and the local map was cleared,
+        # reconstruct a permissive ProxyDCRClient so refresh/token flows don't 400 out.
+        try:
+            from pydantic import AnyUrl
+
+            client = ProxyDCRClient(
+                client_id=client_id,
+                client_secret=None,
+                client_id_issued_at=int(time.time()),
+                client_secret_expires_at=0,
+                redirect_uris=[
+                    AnyUrl("http://localhost")
+                ],  # Default redirect URI, patterns will handle validation
+                grant_types=["authorization_code", "refresh_token"],
+                token_endpoint_auth_method="none",
+                allowed_redirect_uri_patterns=self._allowed_client_redirect_uris,
+                scope=self._default_scope_str,
+            )
+            # Persist for subsequent lookups
+            self._clients[client_id] = client
+            logger.debug(
+                "OAuthProxy.get_client(): reconstructed & stored ProxyDCRClient for %s",
+                client_id,
+            )
+            return client
+        except Exception as e:
+            logger.debug(
+                "OAuthProxy.get_client(): could not reconstruct client %s (%s)",
+                client_id,
+                e,
+            )
+            return None
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
         """Register a client locally
