@@ -413,10 +413,14 @@ class TestOAuthProxyClientRegistration:
         assert retrieved is not None
         assert retrieved.client_id == "test-client"
 
-    async def test_get_unregistered_client_returns_none(self, oauth_proxy):
-        """Test that unregistered clients return None."""
+    async def test_get_unregistered_client_reconstructs(self, oauth_proxy):
+        """Test that unregistered clients are reconstructed for stateless operation."""
         client = await oauth_proxy.get_client("unknown-client")
-        assert client is None
+        assert client is not None
+        assert client.client_id == "unknown-client"
+        # Verify it's a ProxyDCRClient with proper configuration
+        assert client.token_endpoint_auth_method == "none"
+        assert client.grant_types == ["authorization_code", "refresh_token"]
 
 
 class TestOAuthProxyAuthorization:
